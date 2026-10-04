@@ -94,14 +94,21 @@ test('a pdf with scanned pages rejects naming them instead of dropping them', as
 })
 
 // A stand-in for api.firecrawl.dev that answers every request with `reply`
-// and records each hit as [path, whether a PDF came with it, authorization].
+// and records each hit as [method, path, whether the multipart form carries
+// the options and a PDF file, authorization].
 async function withHostedStub(reply, run) {
   const hits = []
   const server = createServer((request, response) => {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
     request.on('end', () => {
-      hits.push([request.url, Buffer.concat(chunks).includes('%PDF-'), request.headers.authorization])
+      const body = Buffer.concat(chunks)
+      const form =
+        /^multipart\/form-data; boundary=/.test(request.headers['content-type']) &&
+        body.includes('name="options"') &&
+        body.includes('name="file"') &&
+        body.includes('%PDF-')
+      hits.push([request.method, request.url, form, request.headers.authorization])
       response.writeHead(reply.status, { 'content-type': 'application/json' })
       response.end(JSON.stringify(reply.body))
     })
@@ -119,16 +126,16 @@ const HOSTED = { status: 200, body: { success: true, data: { markdown: '# Read b
 test("ocr: 'hosted' sends a pdf with scanned pages to Firecrawl Parse, and nothing else", async () => {
   await withHostedStub(HOSTED, async (hits, options) => {
     assert.equal(await toMarkdownBytes(MIXED, null, options), HOSTED.body.data.markdown)
-    assert.deepEqual(hits, [['/v2/parse', true, undefined]])
+    assert.deepEqual(hits, [['POST', '/v2/parse', true, undefined]])
     assert.match(await toMarkdownBytes(OUTLINE, null, options), /^# /m)
-    assert.deepEqual(hits, [['/v2/parse', true, undefined]])
+    assert.deepEqual(hits, [['POST', '/v2/parse', true, undefined]])
   })
 })
 
 test('an api key goes as a bearer token', async () => {
   await withHostedStub(HOSTED, async (hits, options) => {
     await toMarkdownBytes(MIXED, null, { ...options, apiKey: 'fc-test' })
-    assert.deepEqual(hits, [['/v2/parse', true, 'Bearer fc-test']])
+    assert.deepEqual(hits, [['POST', '/v2/parse', true, 'Bearer fc-test']])
   })
 })
 
